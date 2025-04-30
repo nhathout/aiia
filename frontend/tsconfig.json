@@ -1,4 +1,8 @@
 {
+  "compilerOptions": {
+    // …
+    "jsx": "react-jsx",    // for React 17+ automatic JSX runtime
+  },
   "files": [],
   "references": [
     { "path": "./tsconfig.node.json" }

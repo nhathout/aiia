@@ -1,20 +1,46 @@
-import { createContext, useState, ReactNode, useEffect } from 'react';
+import React, { createContext, useState, useEffect } from 'react';
+import { fetchProfile } from './services/api';
 
-interface Ctx { token:string|null; setToken:(t:string|null)=>void; }
-export const AuthCtx = createContext<Ctx>({ token:null, setToken:()=>{} });
+interface AuthCtxType {
+  token: string | null;
+  setToken: (tok: string | null) => void;
+  user: any;
+  setUser: (u: any) => void;
+}
 
-export default function AuthProvider({children}:{children:ReactNode}) {
-  const [tok,setTok] = useState<string|null>(null);
+export const AuthCtx = createContext<AuthCtxType>({
+  token: null,
+  setToken: () => {},
+  user: null,
+  setUser: () => {},
+});
 
-  useEffect(() => {
-    setTok(localStorage.getItem('aiia_tok'));
-  }, []);
+export default function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [token, setTokenState] = useState<string | null>(() =>
+    localStorage.getItem('token')
+  );
+  const [user, setUser] = useState<any>(null);
 
-  const setToken = (t:string|null) => {
-    t ? localStorage.setItem('aiia_tok', t)
-      : localStorage.removeItem('aiia_tok');
-    setTok(t);
+  const setToken = (tok: string | null) => {
+    if (tok) {
+      localStorage.setItem('token', tok);
+    } else {
+      localStorage.removeItem('token');
+    }
+    setTokenState(tok);
   };
 
-  return <AuthCtx.Provider value={{token:tok, setToken}}>{children}</AuthCtx.Provider>;
+  useEffect(() => {
+    if (token) {
+      fetchProfile().then(res => setUser(res.data));
+    } else {
+      setUser(null);
+    }
+  }, [token]);
+
+  return (
+    <AuthCtx.Provider value={{ token, setToken, user, setUser }}>
+      {children}
+    </AuthCtx.Provider>
+  );
 }
