@@ -1,4 +1,4 @@
-# AIIA – AI-Powered Investment Assistant
+# AIIA :: AI-Powered Investment Assistant
 
 AIIA (Artificial Intelligence Investment Advisor) is a web application that provides an AI-driven personal investment assistant. It leverages advanced language models and real-time market data to help users build and manage an investment portfolio. The application consists of a FastAPI backend and a React (Vite) + TailwindCSS frontend, working together to deliver intelligent portfolio recommendations and a smooth user experience.
 
