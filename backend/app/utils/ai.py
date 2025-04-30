@@ -1,120 +1,96 @@
 # backend/app/utils/ai.py
-
-import os
-import re
-import json
-import asyncio
+import os, re, json, asyncio
 from datetime import datetime
-from typing import Any, Dict, List
-from pathlib import Path
+from pathlib   import Path
+from typing    import Any, Dict, List
 
-import requests
-import yfinance as yf
-from openai import AsyncOpenAI
-
-aclient = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+import requests, yfinance as yf
+from openai import OpenAI
 from dotenv import load_dotenv
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 1) Load all your env vars from backend/.env
-# ─────────────────────────────────────────────────────────────────────────────
-BASE = Path(__file__).parent.parent  # => backend/
-load_dotenv(BASE / ".env")
+# ───────────────── load .env ─────────────────
+BASE_DIR = Path(__file__).parent.parent
+load_dotenv(BASE_DIR / ".env")
 
-MODEL            = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-ALPHA_KEY        = os.getenv("ALPHA_VANTAGE_KEY", "").strip()
+OPENAI_KEY = os.getenv("OPENAI_API_KEY", "")
+MODEL      = os.getenv("OPENAI_MODEL",   "gpt-4o-mini")
+ALPHA_KEY  = os.getenv("ALPHA_VANTAGE_KEY", "")
+AV_URL     = "https://www.alphavantage.co/query"
 
-AV_URL = "https://www.alphavantage.co/query"
+client = OpenAI(api_key=OPENAI_KEY)
 
-
+# ───────────────── helpers ───────────────────
 async def fetch_live_prices(tickers: List[str]) -> Dict[str, float]:
+    """Alpha Vantage first, fallback to yfinance."""
     if ALPHA_KEY:
-        def _av_fetch():
-            prices: Dict[str, float] = {}
-            for sym in tickers:
-                resp = requests.get(AV_URL, params={
-                    "function": "GLOBAL_QUOTE",
-                    "symbol":   sym,
-                    "apikey":   ALPHA_KEY,
-                }, timeout=10)
-                data = resp.json().get("Global Quote", {})
-                prices[sym] = float(data.get("05. price", 0) or 0)
-            return prices
-        return await asyncio.to_thread(_av_fetch)
+        def _av():
+            out: Dict[str, float] = {}
+            for t in tickers:
+                r = requests.get(
+                    AV_URL,
+                    params={
+                        "function": "GLOBAL_QUOTE",
+                        "symbol":   t,
+                        "apikey":   ALPHA_KEY,
+                    },
+                    timeout=10,
+                )
+                price = float(r.json().get("Global Quote", {}).get("05. price", 0) or 0)
+                out[t] = price
+            return out
+        return await asyncio.to_thread(_av)
 
-    # fallback to yfinance
-    def _yf_fetch():
-        data = yf.download(tickers, period="1d", interval="1d", progress=False)
-        close = data["Close"]
-        if isinstance(close, float):
-            return {tickers[0]: close}
-        return {sym: float(close[sym].iloc[-1]) for sym in tickers}
-
-    return await asyncio.to_thread(_yf_fetch)
+    def _yf():
+        df = yf.download(tickers, period="1d", interval="1d", progress=False)
+        close = df["Close"]
+        if isinstance(close, float):  # single ticker
+            return {tickers[0]: float(close)}
+        return {t: float(close[t].iloc[-1]) for t in tickers}
+    return await asyncio.to_thread(_yf)
 
 
+# ───────────────── core ──────────────────────
 async def get_portfolio(profile: Dict[str, Any]) -> Dict[str, Any]:
-    # ─────────────────────────────────────────────────────────────────────────
-    # 2) Build a system + user prompt so GPT only emits JSON
-    # ─────────────────────────────────────────────────────────────────────────
-    system_msg = {
+    """ChatGPT → JSON → live prices."""
+    system = {
         "role": "system",
         "content": (
-            "You are an expert financial advisor.  "
-            "Respond *only* with a single JSON object, containing a top-level key "
-            "`holdings`, whose value is a list of { ticker: string, allocation: number }."
+            "You are an expert portfolio strategist.\n"
+            "Return ONLY valid JSON like:\n"
+            '{ "holdings": [ { "ticker": "XYZ", "allocation": 25 }, ... ] }'
+        ),
+    }
+    user = {"role": "user", "content": json.dumps(profile)}
+
+    def _chat():
+        return client.chat.completions.create(
+            model=MODEL,
+            messages=[system, user],
+            temperature=0.0,
+            max_tokens=512,
         )
-    }
-    user_msg = {
-        "role": "user",
-        "content": json.dumps({
-            "budget":      profile["budget"],
-            "horizon":     profile["horizon"],
-            "risk":        profile["risk"],
-            "preferences": profile.get("preferences", []),
-            "broker":      profile.get("broker")
-        })
-    }
 
-    resp = await aclient.chat.completions.create(model=MODEL,
-    messages=[system_msg, user_msg],
-    temperature=0.0,
-    max_tokens=512)
-    raw = resp.choices[0].message.content
+    resp = await asyncio.to_thread(_chat)
+    raw  = resp.choices[0].message.content.strip()
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # 3) Strip fences & extract the first {...} block
-    # ─────────────────────────────────────────────────────────────────────────
-    # e.g. remove ```json ... ``` or any leading text
-    txt = raw.strip()
-    # if they wrapped in markdown fences, drop them
-    if txt.startswith("```"):
-        txt = txt.strip("`").strip()
-    # now find the first JSON object
-    m = re.search(r"\{.*\}", txt, re.DOTALL)
-    if not m:
-        raise ValueError(f"Could not find JSON in LLM reply:\n{raw!r}")
-    json_str = m.group(0)
+    # remove ``` fences if present
+    if raw.startswith("```"):
+        raw = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", raw, flags=re.DOTALL).strip()
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # 4) Parse it
-    # ─────────────────────────────────────────────────────────────────────────
-    try:
-        data = json.loads(json_str)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"LLM returned invalid JSON ({e}):\n{json_str!r}")
+    # grab first {...}
+    match = re.search(r"\{.*\}", raw, re.DOTALL)
+    if not match:
+        raise ValueError(f"LLM did not return JSON:\n{raw}")
+    data = json.loads(match.group(0))
 
     holdings = data.get("holdings", [])
-    tickers  = [h["ticker"] for h in holdings if "ticker" in h]
+    tickers  = [h["ticker"] for h in holdings]
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # 5) Fetch live prices & attach
-    # ─────────────────────────────────────────────────────────────────────────
     prices = await fetch_live_prices(tickers)
     for h in holdings:
         h["price"] = prices.get(h["ticker"], 0.0)
 
     return {
-        "holdings":     holdings,
+        "holdings": holdings,
         "generated_at": datetime.utcnow().isoformat() + "Z",
     }

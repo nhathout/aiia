@@ -1,29 +1,29 @@
-import axios from 'axios';
+// frontend/src/api.ts
+import axios from "axios";
 
-const api = axios.create({ baseURL: '/api' });
+const api = axios.create({ baseURL: "/api" });
 
-// Interceptor: skipAuth flag prevents adding Authorization header
+/* ───────────────────────── request interceptor ───────────────────────── */
 api.interceptors.request.use((cfg: any) => {
   if (!cfg.skipAuth) {
-    const token = localStorage.getItem('token');
-    if (token) cfg.headers.Authorization = `Bearer ${token}`;
+    const token = localStorage.getItem("token");
+    if (token) cfg.headers.Authorization = `Bearer ${token}`;  // ← back-ticks
   }
   return cfg;
 });
 
-// --- AUTH (no Authorization header) ---
-export const signup = (name:string, email:string, password:string) =>
-  api.post('/auth/signup', { name, email, password }, { skipAuth: true });
+/* ────────────────────────── AUTH ───────────────────────── */
+export const signup = (name: string, email: string, password: string) =>
+  api.post("/auth/signup", { name, email, password }, { skipAuth: true });
 
-export const login  = (email:string, password:string) =>
-  api.post('/auth/login',  { email, password },        { skipAuth: true });
+export const login = (email: string, password: string) =>
+  api.post("/auth/login", { email, password }, { skipAuth: true });
 
-export const fetchProfile = () =>
-  api.get('/auth/me');     // returns { id,email,name,preferences,... }
+export const fetchProfile = () => api.get("/auth/me");
 
-// --- MAIN ENDPOINTS ---
-export const recommend     = (payload:any) => api.post('/recommend', payload);
-export const getHistory    = ()             => api.get('/recommend');
-export const updateProfile = (data:any)    => api.put('/profile', data);
+/* ───────────────────────── MAIN ───────────────────────── */
+export const recommend    = (payload: any) => api.post("/recommend", payload);
+export const getHistory   = ()             => api.get("/recommend");
+export const updateProfile = (data: any)   => api.put("/profile", data);
 
 export default api;
